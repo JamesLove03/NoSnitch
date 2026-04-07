@@ -1,10 +1,10 @@
 CC ?= gcc
 CFLAGS ?= -Wall -O2
 
-all: NoSnitch
+all: nosnitch
 
-NoSnitch: NoSnitch.c
+nosnitch: nosnitch.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
-	rm -f NoSnitch
+	rm -f nosnitch

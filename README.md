@@ -17,7 +17,7 @@ Wi-Fi client isolation bypass vulnerabilities as described in NDSS 2026.
 ## Build Instructions
 Add as an OpenWrt external feed (see Installation below),
 then run:
-  make package/NoSnitch/compile V=s
+  make package/nosnitch/compile V=s
 
 ## Installation as OpenWrt Feed
 Add to feeds.conf in your OpenWrt tree:
@@ -25,7 +25,7 @@ Add to feeds.conf in your OpenWrt tree:
 
 Then run:
   ./scripts/feeds update airsnitch
-  ./scripts/feeds install NoSnitch
+  ./scripts/feeds install nosnitch
 
 ## Testing Methodology
 1. Flash OpenWrt 24.10 baseline (no mitigations)
