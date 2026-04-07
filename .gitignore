@@ -1,0 +1,5 @@
+*.o
+*.ipk
+*.a
+build_dir/
+tmp/
