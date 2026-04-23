@@ -54,6 +54,42 @@ static void install_sync_drop(bool add) {
 			op, ns_cfg.wlan_ifaces[i], ns_cfg.sync_group);
 }
 
+/* Patch 3 Step 3: if the user didn't pin a gateway MAC in UCI, try to
+ * learn the upstream gateway's MAC from the kernel. The gateway IP
+ * comes from the default route; the MAC comes from the neighbour table.
+ * This is skipped when the router is its own gateway (no default via). */
+static void auto_discover_gateway_mac(void) {
+	if (ns_cfg.gateway_mac[0]) return;
+
+	char buf[64];
+	FILE *f = popen("ip -4 route show default 2>/dev/null "
+		"| awk '/^default via/ {print $3; exit}'", "r");
+	if (!f) return;
+	if (!fgets(buf, sizeof(buf), f)) { pclose(f); return; }
+	pclose(f);
+
+	char *nl = strchr(buf, '\n'); if (nl) *nl = 0;
+	if (!buf[0]) return;
+
+	char cmd[128];
+	snprintf(cmd, sizeof(cmd),
+		"ip neigh show %s 2>/dev/null "
+		"| awk '/lladdr/ {print $5; exit}'", buf);
+	f = popen(cmd, "r");
+	if (!f) return;
+
+	char mac[32] = {0};
+	if (fgets(mac, sizeof(mac), f)) {
+		nl = strchr(mac, '\n'); if (nl) *nl = 0;
+		if (valid_mac(mac)) {
+			snprintf(ns_cfg.gateway_mac,
+				sizeof(ns_cfg.gateway_mac), "%s", mac);
+			NS_LOG("discovered gateway mac: %s (via %s)", mac, buf);
+		}
+	}
+	pclose(f);
+}
+
 int ns_enforce_init(void) {
 	/* Fresh chain — tolerate leftovers from a crashed previous run. */
 	run("ebtables -D FORWARD -j " NS_EB_CHAIN " 2>/dev/null");
@@ -63,6 +99,7 @@ int ns_enforce_init(void) {
 	run("ebtables -A FORWARD -j " NS_EB_CHAIN " 2>/dev/null");
 
 	/* Patch 3 Step 3: lock gateway MAC to the wired side. */
+	if (ns_cfg.mac_lock) auto_discover_gateway_mac();
 	if (ns_cfg.mac_lock && ns_cfg.gateway_mac[0] &&
 	    valid_mac(ns_cfg.gateway_mac)) {
 		for (int i = 0; i < ns_cfg.wlan_iface_count; i++)

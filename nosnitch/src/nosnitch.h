@@ -44,6 +44,7 @@ struct ns_client {
 	char ip6[INET6_ADDRSTRLEN];
 	time_t assoc_time;
 	time_t last_seen;
+	struct timespec last_assoc_mono;
 	bool remote;
 	struct ns_client *next;
 };
@@ -67,6 +68,8 @@ void ns_sync_announce_assoc(const uint8_t mac[NS_MAC_LEN]);
 void ns_sync_announce_disassoc(const uint8_t mac[NS_MAC_LEN]);
 void ns_sync_announce_heartbeat(const uint8_t mac[NS_MAC_LEN]);
 bool ns_sync_is_remote(const uint8_t mac[NS_MAC_LEN]);
+/* Returns peer's last-seen time for this MAC, or 0 if no remote entry. */
+time_t ns_sync_remote_last_seen(const uint8_t mac[NS_MAC_LEN]);
 
 int ns_anomaly_init(void);
 void ns_anomaly_shutdown(void);

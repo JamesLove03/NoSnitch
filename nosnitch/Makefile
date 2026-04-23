@@ -10,7 +10,7 @@ define Package/nosnitch
   SECTION:=net
   CATEGORY:=Network
   TITLE:=AirSnitch Client Isolation Mitigations
-  DEPENDS:=+nftables +hostapd-utils +kmod-nft-bridge +ebtables +libubox +libubus +libblobmsg-json +libuci
+  DEPENDS:=+nftables +hostapd-utils +kmod-nft-bridge +ebtables +iw +haveged +libubox +libubus +libblobmsg-json +libuci
 endef
 
 define Package/nosnitch/description
@@ -61,6 +61,19 @@ define Package/nosnitch/postinst
 	/etc/init.d/firewall reload 2>/dev/null
 	sysctl -p /etc/sysctl.d/30-nosnitch.conf >/dev/null 2>&1
 	/etc/init.d/nosnitch start
+	cat >&2 <<'EOM'
+nosnitch: installed. For full AirSnitch coverage, also set in
+/etc/config/wireless (nosnitch cannot write wireless config itself):
+  option ieee80211w       '2'   # Patch 3 Step 5 (MFP)
+  option multicast_to_unicast '1'
+  option proxy_arp        '1'
+  option wpa_strict_rekey '1'
+  option wpa_group_rekey  '600'
+  option disable_dgaf     '1'
+  option per_client_gtk   '1'   # requires hostapd-patches/901
+The hostapd-patches/ tree under /usr/share/nosnitch/ must also be
+applied to the hostapd package and hostapd rebuilt.
+EOM
 }
 exit 0
 endef

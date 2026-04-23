@@ -54,6 +54,7 @@ struct ns_client *ns_client_add(const uint8_t mac[NS_MAC_LEN], const char *iface
 	if (c) {
 		snprintf(c->iface, sizeof(c->iface), "%s", iface ? iface : "");
 		c->last_seen = time(NULL);
+		clock_gettime(CLOCK_MONOTONIC, &c->last_assoc_mono);
 		return c;
 	}
 	c = calloc(1, sizeof(*c));
@@ -62,6 +63,7 @@ struct ns_client *ns_client_add(const uint8_t mac[NS_MAC_LEN], const char *iface
 	ns_mac_format(mac, c->mac_str);
 	snprintf(c->iface, sizeof(c->iface), "%s", iface ? iface : "");
 	c->assoc_time = c->last_seen = time(NULL);
+	clock_gettime(CLOCK_MONOTONIC, &c->last_assoc_mono);
 	c->next = clients_head;
 	clients_head = c;
 	return c;
@@ -141,21 +143,43 @@ static void handle_assoc(const char *mac_str, const char *iface) {
 	struct ns_client *existing = ns_client_find(mac);
 	if (existing && ns_cfg.mac_lock_bridge &&
 	    iface && strcmp(existing->iface, iface) != 0) {
-		time_t dt_ms = (time(NULL) - existing->last_seen) * 1000;
-		if ((unsigned)dt_ms > ns_cfg.roaming_grace_ms) {
-			NS_LOG("SPOOF: %s already on %s, rejecting on %s",
-				mac_str, existing->iface, iface);
+		struct timespec now;
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		long dt_ms = (now.tv_sec - existing->last_assoc_mono.tv_sec) * 1000L +
+			(now.tv_nsec - existing->last_assoc_mono.tv_nsec) / 1000000L;
+		if (dt_ms > (long)ns_cfg.roaming_grace_ms) {
+			NS_LOG("SPOOF: %s already on %s (%ldms), rejecting on %s",
+				mac_str, existing->iface, dt_ms, iface);
 			ns_enforce_deauth(iface, mac_str);
 			return;
 		}
-		NS_LOG("roam: %s %s -> %s", mac_str, existing->iface, iface);
+		NS_LOG("roam: %s %s -> %s (%ldms)",
+			mac_str, existing->iface, iface, dt_ms);
 		ns_enforce_disassoc(mac_str, existing->iface);
 	}
 
-	if (ns_cfg.mac_lock_network && ns_sync_is_remote(mac)) {
-		NS_LOG("SPOOF (remote AP): %s already associated on peer", mac_str);
-		if (iface) ns_enforce_deauth(iface, mac_str);
-		return;
+	if (ns_cfg.mac_lock_network) {
+		time_t remote_last = ns_sync_remote_last_seen(mac);
+		if (remote_last > 0) {
+			/* Patch 3 Step 7b: apply the Step 4 grace check using
+			 * the peer's most recent ASSOC/HEARTBEAT timestamp as
+			 * the client's "last activity." Within the window,
+			 * treat as a legitimate roam; the ASSOC announcement
+			 * below notifies peers to release the old session.
+			 * NB: resolution is bounded below by heartbeat_interval
+			 * (5s default), so keep roaming_grace_ms comfortably
+			 * above it — otherwise legit roams get false-flagged
+			 * whenever the client arrives between heartbeats. */
+			long age_ms = (long)(time(NULL) - remote_last) * 1000;
+			if (age_ms > (long)ns_cfg.roaming_grace_ms) {
+				NS_LOG("SPOOF (remote AP): %s peer last seen %ldms ago",
+					mac_str, age_ms);
+				if (iface) ns_enforce_deauth(iface, mac_str);
+				return;
+			}
+			NS_LOG("cross-AP roam: %s (peer seen %ldms ago)",
+				mac_str, age_ms);
+		}
 	}
 
 	if (iface) ns_config_add_wlan_iface(iface);

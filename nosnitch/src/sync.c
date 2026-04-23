@@ -39,7 +39,6 @@ static int sock_fd = -1;
 static struct uloop_fd sock_ufd;
 static struct uloop_timeout heartbeat_tmo;
 static struct remote_entry *remote_head;
-static struct in_addr local_addr;
 
 static struct remote_entry *remote_find(const uint8_t mac[NS_MAC_LEN]) {
 	for (struct remote_entry *r = remote_head; r; r = r->next)
@@ -93,6 +92,11 @@ bool ns_sync_is_remote(const uint8_t mac[NS_MAC_LEN]) {
 	return remote_find(mac) != NULL;
 }
 
+time_t ns_sync_remote_last_seen(const uint8_t mac[NS_MAC_LEN]) {
+	struct remote_entry *r = remote_find(mac);
+	return r ? r->last_seen : 0;
+}
+
 static void send_msg(uint8_t type, const uint8_t mac[NS_MAC_LEN]) {
 	if (sock_fd < 0) return;
 	uint8_t buf[MSG_LEN] = {0};
@@ -125,12 +129,10 @@ void ns_sync_announce_heartbeat(const uint8_t mac[NS_MAC_LEN]) {
 static void on_sock(struct uloop_fd *u, unsigned int events) {
 	(void)events;
 	uint8_t buf[64];
-	struct sockaddr_in src;
-	socklen_t slen = sizeof(src);
-	ssize_t n = recvfrom(u->fd, buf, sizeof(buf), 0,
-	                     (struct sockaddr *)&src, &slen);
+	/* IP_MULTICAST_LOOP=0 (set below) stops us from seeing our own
+	 * sends, so no explicit self-address filter is needed. */
+	ssize_t n = recv(u->fd, buf, sizeof(buf), 0);
 	if (n != MSG_LEN) return;
-	if (src.sin_addr.s_addr == local_addr.s_addr) return;
 
 	uint8_t mac[NS_MAC_LEN];
 	memcpy(mac, buf + 1, NS_MAC_LEN);

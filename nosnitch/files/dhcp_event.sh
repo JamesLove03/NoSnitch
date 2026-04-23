@@ -8,16 +8,14 @@ ip=$3
 [ -z "$ip" ] && exit 0
 
 # Only maintain set membership for MACs currently associated on a
-# wireless interface. iw dev lists associated stations per-phy.
+# wireless interface. `iw dev` already walks every phy on the box, so
+# a single invocation is enough.
 is_wireless_client() {
-	local m=$1
-	for phy in /sys/class/ieee80211/*; do
-		[ -d "$phy" ] || continue
-		phy=${phy##*/}
-		iw dev 2>/dev/null | awk '/Station/ { print tolower($2) }' |
-			grep -qi "^$(echo "$m" | tr A-Z a-z)$" && return 0
-	done
-	return 1
+	local m
+	m=$(echo "$1" | tr 'A-Z' 'a-z')
+	iw dev 2>/dev/null \
+		| awk '/Station/ { print tolower($2) }' \
+		| grep -qx "$m"
 }
 
 case "$action" in
