@@ -10,13 +10,13 @@ define Package/nosnitch
   SECTION:=net
   CATEGORY:=Network
   TITLE:=AirSnitch Client Isolation Mitigations
-  DEPENDS:=+nftables +hostapd-utils +kmod-nft-bridge
+  DEPENDS:=+nftables +hostapd-utils +kmod-nft-bridge +ebtables +libubox +libubus +libblobmsg-json +libuci
 endef
 
 define Package/nosnitch/description
-  Implements mitigations for AirSnitch client isolation
-  bypass vulnerabilities including GTK abuse, gateway
-  bouncing, port stealing, and broadcast reflection.
+  Implements mitigations for AirSnitch (NDSS 2026) client
+  isolation bypass vulnerabilities: GTK abuse, broadcast
+  reflection, gateway bouncing, and port stealing.
 endef
 
 define Build/Prepare
@@ -27,19 +27,51 @@ endef
 define Build/Compile
 	$(MAKE) -f build.mk -C $(PKG_BUILD_DIR) \
 		CC="$(TARGET_CC)" \
-		CFLAGS="$(TARGET_CFLAGS)"
+		CFLAGS="$(TARGET_CFLAGS) -I$(STAGING_DIR)/usr/include" \
+		LDFLAGS="$(TARGET_LDFLAGS) -L$(STAGING_DIR)/usr/lib"
+endef
+
+define Package/nosnitch/conffiles
+/etc/config/nosnitch
 endef
 
 define Package/nosnitch/install
 	$(INSTALL_DIR) $(1)/usr/sbin
+	$(INSTALL_DIR) $(1)/usr/lib/nosnitch
 	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_DIR) $(1)/etc/nosnitch
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/nosnitch \
-		$(1)/usr/sbin/
-	$(INSTALL_BIN) ./files/nosnitch.init \
-		$(1)/etc/init.d/nosnitch
-	$(INSTALL_DATA) ./files/nosnitch.conf \
-		$(1)/etc/nosnitch/
+	$(INSTALL_DIR) $(1)/etc/config
+	$(INSTALL_DIR) $(1)/etc/nftables.d
+	$(INSTALL_DIR) $(1)/etc/sysctl.d
+	$(INSTALL_DIR) $(1)/etc/hotplug.d/dhcp
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/nosnitch $(1)/usr/sbin/
+	$(INSTALL_BIN) ./files/nosnitch.init $(1)/etc/init.d/nosnitch
+	$(INSTALL_CONF) ./files/nosnitch.config $(1)/etc/config/nosnitch
+	$(INSTALL_DATA) ./files/nosnitch.nft $(1)/etc/nftables.d/10-nosnitch.nft
+	$(INSTALL_DATA) ./files/nosnitch.sysctl $(1)/etc/sysctl.d/30-nosnitch.conf
+	$(INSTALL_BIN) ./files/dhcp_event.sh $(1)/usr/lib/nosnitch/dhcp_event.sh
+	$(INSTALL_BIN) ./files/dhcp.hotplug $(1)/etc/hotplug.d/dhcp/50-nosnitch
+	$(INSTALL_DIR) $(1)/usr/share/nosnitch/hostapd-patches
+	$(CP) ./hostapd-patches/* $(1)/usr/share/nosnitch/hostapd-patches/
+endef
+
+define Package/nosnitch/postinst
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] || {
+	/etc/init.d/nosnitch enable
+	/etc/init.d/firewall reload 2>/dev/null
+	sysctl -p /etc/sysctl.d/30-nosnitch.conf >/dev/null 2>&1
+	/etc/init.d/nosnitch start
+}
+exit 0
+endef
+
+define Package/nosnitch/prerm
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] || {
+	/etc/init.d/nosnitch stop
+	/etc/init.d/nosnitch disable
+}
+exit 0
 endef
 
 $(eval $(call BuildPackage,nosnitch))

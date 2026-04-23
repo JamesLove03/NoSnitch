@@ -1,0 +1,33 @@
+From: nosnitch <nosnitch@local>
+Subject: [PATCH] AirSnitch Patch 1 Step 7: expose new options via UCI
+
+Surface the hostapd options required by the AirSnitch mitigations
+through /etc/config/wireless.
+
+--- a/package/network/services/hostapd/files/hostapd.sh
++++ b/package/network/services/hostapd/files/hostapd.sh
+@@ -nnn,6 +nnn,18 @@ hostapd_common_add_bss_config() {
++	# AirSnitch mitigations (Patch 1)
++	config_add_boolean multicast_to_unicast
++	config_add_boolean proxy_arp
++	config_add_boolean wpa_strict_rekey
++	config_add_int     wpa_group_rekey
++	config_add_boolean disable_dgaf
++	config_add_boolean per_client_gtk
+ }
+@@ -nnn,6 +nnn,20 @@ hostapd_set_bss_options() {
++	# AirSnitch: emit bss-config lines.
++	local airsnitch_multicast_to_unicast airsnitch_proxy_arp
++	local airsnitch_wpa_strict_rekey airsnitch_wpa_group_rekey
++	local airsnitch_disable_dgaf airsnitch_per_client_gtk
++	json_get_vars \
++		multicast_to_unicast proxy_arp \
++		wpa_strict_rekey wpa_group_rekey \
++		disable_dgaf per_client_gtk
++	[ -n "$multicast_to_unicast" ] && append bss_conf "multicast_to_unicast=$multicast_to_unicast" "$N"
++	[ -n "$proxy_arp" ]             && append bss_conf "proxy_arp=$proxy_arp" "$N"
++	[ "$wpa_strict_rekey" = "1" ]   && append bss_conf "wpa_strict_rekey=1" "$N"
++	[ -n "$wpa_group_rekey" ]       && append bss_conf "wpa_group_rekey=$wpa_group_rekey" "$N"
++	[ "$disable_dgaf" = "1" ]       && append bss_conf "disable_dgaf=1" "$N"
++	[ "$per_client_gtk" = "1" ]     && append bss_conf "per_client_gtk=1" "$N"
+ }

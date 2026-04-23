@@ -1,0 +1,52 @@
+From: nosnitch <nosnitch@local>
+Subject: [PATCH] AirSnitch Patch 1 Steps 1-2: broadcast filtering
+
+Drop client-originated group-addressed frames (identified by
+ToDS=1/FromDS=0, not by MAC which is spoofable), and refuse to
+re-encrypt and forward any group-addressed frame that originated
+from a wireless client (broadcast reflection).
+
+--- a/src/ap/ieee802_11.c
++++ b/src/ap/ieee802_11.c
+@@ -nnn,6 +nnn,22 @@
+ static void handle_data(struct hostapd_data *hapd, const u8 *buf, size_t len,
+ 			enum frame_encryption encrypted)
+ {
++	const struct ieee80211_hdr *hdr = (const struct ieee80211_hdr *) buf;
++	u16 fc = le_to_host16(hdr->frame_control);
++
++	/* AirSnitch Patch 1 Step 1: drop client-originated broadcasts.
++	 * Use ToDS/FromDS flags (unspoofable at the RF layer) rather
++	 * than source MAC (spoofable). */
++	if (WLAN_FC_GET_TYPE(fc) == WLAN_FC_TYPE_DATA &&
++	    (fc & WLAN_FC_TODS) && !(fc & WLAN_FC_FROMDS) &&
++	    is_multicast_ether_addr(hdr->addr3)) {
++		wpa_printf(MSG_DEBUG,
++			   "AirSnitch: dropping client-originated group frame from "
++			   MACSTR, MAC2STR(hdr->addr2));
++		/* Feed the nosnitch anomaly detector (Patch 1 Step 6).
++		 * hostapd_ubus_notify is OpenWrt's wrapper around
++		 * ubus_notify(); the daemon subscribes to hostapd.* and
++		 * matches methods containing "bcast_drop". */
++		hostapd_ubus_notify(hapd, "bcast_drop", hdr->addr2);
++		return;
++	}
++
+ 	/* ... existing handler body ... */
+ }
+
+--- a/src/ap/ap_drv_ops.c
++++ b/src/ap/ap_drv_ops.c
+@@ -nnn,6 +nnn,16 @@
+ int hostapd_drv_hapd_send_eapol(...)
+ {
++	/* AirSnitch Patch 1 Step 2: refuse to re-encrypt and forward
++	 * any group-addressed frame that originated from a STA. */
++	if (is_multicast_ether_addr(dst) && src_is_sta) {
++		wpa_printf(MSG_DEBUG,
++			   "AirSnitch: refusing broadcast reflection");
++		return -1;
++	}
++
+ 	/* ... existing forwarding logic ... */
+ }

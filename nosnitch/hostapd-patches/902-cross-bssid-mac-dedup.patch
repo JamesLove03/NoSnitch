@@ -1,0 +1,43 @@
+From: nosnitch <nosnitch@local>
+Subject: [PATCH] AirSnitch Patch 3 Step 1: reject duplicate MAC across BSSes
+
+When a STA attempts to associate with a MAC that is already
+associated on any other BSS on the same hostapd instance, deauth
+it rather than accepting. This defeats the cross-BSSID port
+stealing primitive on multi-SSID APs.
+
+The 500 ms roaming grace window is enforced by the nosnitch
+daemon using ubus events (see Patch 3 Step 4), which lets
+legitimate 802.11r roams proceed.
+
+--- a/src/ap/ieee802_11.c
++++ b/src/ap/ieee802_11.c
+@@ -nnn,6 +nnn,25 @@ static void handle_assoc(struct hostapd_data *hapd,
+ 			      int reassoc)
+ {
++	/* AirSnitch Patch 3 Step 1: cross-BSSID duplicate MAC rejection.
++	 * Block the case where an attacker holds a victim's MAC on BSS
++	 * A while associating with it on BSS B — which poisons the
++	 * bridge MAC-to-port table and redirects the victim's downlink
++	 * to the attacker. */
++	{
++		size_t i;
++		for (i = 0; i < hapd->iface->num_bss; i++) {
++			struct hostapd_data *other = hapd->iface->bss[i];
++			if (other == hapd)
++				continue;
++			if (ap_get_sta(other, mgmt->sa) != NULL) {
++				wpa_printf(MSG_INFO,
++					"AirSnitch: MAC " MACSTR
++					" already on BSS %s, rejecting on %s",
++					MAC2STR(mgmt->sa),
++					other->conf->iface, hapd->conf->iface);
++				hostapd_drv_sta_deauth(hapd, mgmt->sa,
++					WLAN_REASON_UNSPECIFIED);
++				return;
++			}
++		}
++	}
++
+ 	/* ... existing association handling ... */
+ }

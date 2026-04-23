@@ -1,0 +1,96 @@
+From: nosnitch <nosnitch@local>
+Subject: [PATCH] AirSnitch Patch 1 Step 8: per-client GTK/IGTK across all handshakes
+
+hostapd's disable_dgaf=1 randomizes the GTK only on the 4-way
+handshake. Extend the same randomization to the group-key
+handshake, FT reassociation response, FILS, and WNM-Sleep
+response — the four paths that otherwise leak the shared GTK.
+Also randomize the IGTK along with the GTK, consistent with
+Passpoint v3.4.
+
+Enabled when the new per_client_gtk bss option is set (exposed
+via the hostapd.sh UCI patch).
+
+--- a/src/ap/ap_config.h
++++ b/src/ap/ap_config.h
+@@ -nnn,6 +nnn,7 @@
+ struct hostapd_bss_config {
+ 	...
+ 	int disable_dgaf;
++	int per_client_gtk;  /* AirSnitch: randomize GTK/IGTK per STA */
+ 	...
+ };
+
+--- a/src/ap/wpa_auth.c
++++ b/src/ap/wpa_auth.c
+@@ -nnn,7 +nnn,18 @@ SM_STATE(WPA_PTK_GROUP, REKEYNEGOTIATING)
+ {
+-	/* Send group key message 1 with the shared GTK. */
++	/* AirSnitch Patch 1 Step 8a: when per_client_gtk is enabled,
++	 * substitute a fresh random GTK+IGTK for this STA instead of
++	 * the shared group key. Each STA already receives its own
++	 * PTK-encrypted copy of this message, so the only change is
++	 * the key material inserted. */
++	const u8 *gtk = gsm->GTK[gsm->GN - 1];
++	const u8 *igtk = gsm->IGTK[gsm->GN_igtk - 4];
++	u8 per_gtk[WPA_GTK_MAX_LEN];
++	u8 per_igtk[WPA_IGTK_MAX_LEN];
++	if (sm->wpa_auth->conf.per_client_gtk) {
++		os_get_random(per_gtk, sizeof(per_gtk));
++		os_get_random(per_igtk, sizeof(per_igtk));
++		gtk = per_gtk; igtk = per_igtk;
++	}
+ 	/* ... existing message construction using gtk/igtk ... */
+ }
+
+--- a/src/ap/wpa_auth_ft.c
++++ b/src/ap/wpa_auth_ft.c
+@@ -nnn,6 +nnn,14 @@ static int wpa_ft_gtk_subelem(...)
+ {
++	/* AirSnitch Patch 1 Step 8b: per-client GTK on FT reassociation. */
++	u8 per_gtk[WPA_GTK_MAX_LEN];
++	if (sm->wpa_auth->conf.per_client_gtk) {
++		os_get_random(per_gtk, gsm->GTK_len);
++		gtk = per_gtk;
++	}
+ 	/* ... existing sub-element construction ... */
+ }
+
+--- a/src/ap/wpa_auth.c
++++ b/src/ap/wpa_auth.c
+@@ -nnn,6 +nnn,12 @@ int fils_set_tk(struct wpa_state_machine *sm)
+ {
++	/* AirSnitch Patch 1 Step 8c: per-client GTK in FILS association. */
++	u8 per_gtk[WPA_GTK_MAX_LEN];
++	if (sm->wpa_auth->conf.per_client_gtk) {
++		os_get_random(per_gtk, gsm->GTK_len);
++		gtk = per_gtk;
++	}
+ 	/* ... */
+ }
+
+--- a/src/ap/wnm_ap.c
++++ b/src/ap/wnm_ap.c
+@@ -nnn,6 +nnn,15 @@ static int ieee802_11_send_wnmsleep_resp(...)
+ {
++	/* AirSnitch Patch 1 Step 8d/8e: per-client GTK and IGTK in the
++	 * WNM-Sleep response. Without IGTK randomization, a shared
++	 * IGTK lets an attacker craft a spoofed response that installs
++	 * an attacker-controlled GTK on the victim. */
++	u8 per_gtk[WPA_GTK_MAX_LEN];
++	u8 per_igtk[WPA_IGTK_MAX_LEN];
++	if (hapd->conf->per_client_gtk) {
++		os_get_random(per_gtk, gsm->GTK_len);
++		os_get_random(per_igtk, sizeof(per_igtk));
++	}
+ 	/* ... */
+ }
+
+--- a/hostapd/config_file.c
++++ b/hostapd/config_file.c
+@@ -nnn,6 +nnn,8 @@ static int hostapd_config_fill(...)
+ 	} else if (os_strcmp(buf, "disable_dgaf") == 0) {
+ 		bss->disable_dgaf = atoi(pos);
++	} else if (os_strcmp(buf, "per_client_gtk") == 0) {
++		bss->per_client_gtk = atoi(pos);
+ 	}

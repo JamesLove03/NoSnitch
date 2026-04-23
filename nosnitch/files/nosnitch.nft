@@ -1,0 +1,22 @@
+# Patch 2: Gateway Bouncing — L3 isolation of wireless clients.
+# Loaded by firewall4 from /etc/nftables.d.
+
+table inet fw4 {
+	set wifi_clients {
+		type ipv4_addr
+		flags dynamic, timeout
+		timeout 24h
+	}
+
+	set wifi6_clients {
+		type ipv6_addr
+		flags dynamic, timeout
+		timeout 24h
+	}
+
+	chain nosnitch_forward {
+		type filter hook forward priority 0; policy accept;
+		ip  saddr @wifi_clients  ip  daddr @wifi_clients  drop
+		ip6 saddr @wifi6_clients ip6 daddr @wifi6_clients drop
+	}
+}

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Patch 2 Step 2: DHCP lease events — add/remove client IPs from the
+# nftables wifi_clients set. Invoked by OpenWrt dhcp hotplug.
+exec /usr/lib/nosnitch/dhcp_event.sh "$ACTION" "$MACADDR" "$IPADDR" "$HOSTNAME"
