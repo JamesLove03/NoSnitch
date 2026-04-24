@@ -78,7 +78,7 @@ static void auto_discover_gateway_mac(void) {
 	f = popen(cmd, "r");
 	if (!f) return;
 
-	char mac[32] = {0};
+	char mac[18] = {0};
 	if (fgets(mac, sizeof(mac), f)) {
 		nl = strchr(mac, '\n'); if (nl) *nl = 0;
 		if (valid_mac(mac)) {

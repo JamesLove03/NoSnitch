@@ -232,26 +232,24 @@ static const struct blobmsg_policy hapd_policy[__HAPD_MAX] = {
 	[HAPD_IFNAME] = { .name = "ifname",  .type = BLOBMSG_TYPE_STRING },
 };
 
-static int hapd_event_cb(struct ubus_context *ctx, struct ubus_object *obj,
-                         struct ubus_request_data *req, const char *method,
-                         struct blob_attr *msg)
+static void hapd_event_cb(struct ubus_context *ctx, struct ubus_event_handler *ev,
+                          const char *type, struct blob_attr *msg)
 {
-	(void)ctx; (void)obj; (void)req;
+	(void)ctx; (void)ev;
 	struct blob_attr *tb[__HAPD_MAX];
 	blobmsg_parse(hapd_policy, __HAPD_MAX, tb, blob_data(msg), blob_len(msg));
 
 	const char *addr   = tb[HAPD_ADDR]   ? blobmsg_get_string(tb[HAPD_ADDR])   : NULL;
 	const char *ifname = tb[HAPD_IFNAME] ? blobmsg_get_string(tb[HAPD_IFNAME]) : NULL;
 
-	if (!addr) return 0;
+	if (!addr) return;
 
-	if (strstr(method, "bcast_drop") || strstr(method, "broadcast_drop"))
+	if (strstr(type, "bcast_drop") || strstr(type, "broadcast_drop"))
 		handle_broadcast_drop(addr);
-	else if (strstr(method, "assoc") && !strstr(method, "dis"))
+	else if (strstr(type, "assoc") && !strstr(type, "dis"))
 		handle_assoc(addr, ifname);
-	else if (strstr(method, "disassoc") || strstr(method, "deauth"))
+	else if (strstr(type, "disassoc") || strstr(type, "deauth"))
 		handle_disassoc(addr, ifname);
-	return 0;
 }
 
 static struct ubus_event_handler hapd_ev = { .cb = hapd_event_cb };

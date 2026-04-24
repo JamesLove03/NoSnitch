@@ -64,7 +64,6 @@ define Package/nosnitch/postinst
 	cat >&2 <<'EOM'
 nosnitch: installed. For full AirSnitch coverage, also set in
 /etc/config/wireless (nosnitch cannot write wireless config itself):
-  option ieee80211w       '2'   # Patch 3 Step 5 (MFP)
   option multicast_to_unicast '1'
   option proxy_arp        '1'
   option wpa_strict_rekey '1'

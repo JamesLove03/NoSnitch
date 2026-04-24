@@ -1,0 +1,276 @@
+% Deployment walkthrough for the nosnitch package.
+% Requires: \usepackage{listings}, \usepackage{xcolor} (or similar) in the
+% including document. The listings below use a generic shell style; adjust
+% \lstset to match your paper's conventions.
+
+\section{Deployment}
+\label{sec:deployment}
+
+The \texttt{nosnitch} package implements the AirSnitch mitigations across
+two layers: a userspace guard daemon (shipped as an OpenWrt package) and
+a set of source-level patches to \texttt{hostapd}. The daemon covers
+Patches~2 and~3 in full. The hostapd patches are required for Patch~1's
+core primitives (broadcast filtering, per-client GTK in secondary
+handshakes) and for Patch~3's cross-BSSID duplicate-MAC rejection. Two
+deployment paths are supported:
+
+\begin{description}
+  \item[Full deployment (\S\ref{sec:deploy-full}).] Rebuild OpenWrt from
+  source with the hostapd patches applied. All mitigations active.
+  \item[Runtime-only deployment (\S\ref{sec:deploy-runtime}).] Install
+  the package on a stock OpenWrt router via \texttt{opkg}. Patches~2
+  and~3 (userspace) are active; Patch~1 primitives requiring hostapd
+  source changes are not.
+\end{description}
+
+Full deployment is required to reproduce the results reported in this
+paper. Runtime-only deployment is documented as a defense-in-depth
+fallback for operators who cannot maintain a custom firmware image.
+
+\subsection{Full Deployment}
+\label{sec:deploy-full}
+
+\subsubsection{Prerequisites}
+
+\begin{itemize}
+  \item A Linux build host with the OpenWrt toolchain prerequisites
+  (see the OpenWrt Developer Guide).
+  \item The target device's OpenWrt version and profile. Reference
+  deployment: GL.iNet GL-MT6000 (Flint 2), OpenWrt 24.10,
+  profile \texttt{mediatek/filogic}.
+  \item Approximately 20\,GB of free disk for the buildroot.
+\end{itemize}
+
+\subsubsection{Step 1: Obtain the OpenWrt buildroot}
+
+\begin{lstlisting}[language=bash]
+git clone https://git.openwrt.org/openwrt/openwrt.git
+cd openwrt
+git checkout v24.10.0
+./scripts/feeds update -a
+./scripts/feeds install -a
+\end{lstlisting}
+
+\subsubsection{Step 2: Register the nosnitch feed}
+
+Append the following line to \texttt{feeds.conf.default} (or create
+\texttt{feeds.conf}):
+
+\begin{lstlisting}
+src-git nosnitch https://github.com/JamesLove03/NoSnitch.git
+\end{lstlisting}
+
+\noindent Install the feed:
+
+\begin{lstlisting}[language=bash]
+./scripts/feeds update nosnitch
+./scripts/feeds install nosnitch
+\end{lstlisting}
+
+\subsubsection{Step 3: Apply the hostapd patches}
+\label{sec:deploy-hostapd-patches}
+
+The nosnitch feed ships a helper script that installs the hostapd
+patches into the buildroot in one invocation. It distinguishes between
+the two patch flavours automatically: source-level patches against
+upstream hostapd are copied into
+\texttt{package/network/services/hostapd/patches/} for OpenWrt's build
+system to apply during compile, while the buildroot-level patch against
+\texttt{hostapd.sh} is applied in-tree with \texttt{patch~-p1
+--forward}. The \texttt{--forward} flag makes the script idempotent;
+re-running on an already-patched tree is a no-op.
+
+A POSIX-shell version and a Python version are provided; both behave
+identically. Pick whichever is more convenient on the build host:
+
+\begin{lstlisting}[language=bash]
+feeds/nosnitch/nosnitch/scripts/install-hostapd-patches.sh .
+# or:
+feeds/nosnitch/nosnitch/scripts/install-hostapd-patches.py .
+\end{lstlisting}
+
+\noindent The single positional argument is the OpenWrt source root
+(here, the current directory). The script validates that the target
+looks like an OpenWrt tree before touching anything.
+
+The source-level patches target hostapd~2.11. On other versions the
+hunks may fail with fuzz; resolve any \texttt{.rej} files by
+re-anchoring to the current line numbers before proceeding to Step~5.
+
+\subsubsection{Step 4: Select packages and target}
+
+\begin{lstlisting}[language=bash]
+make menuconfig
+\end{lstlisting}
+
+\noindent In the menu:
+
+\begin{enumerate}
+  \item Set \emph{Target System} and \emph{Target Profile} to the
+  deployment device.
+  \item Under \emph{Network}, mark \texttt{nosnitch} as \texttt{<*>}
+  (built-in) or \texttt{<M>} (loadable module).
+  \item Exit and save.
+\end{enumerate}
+
+\subsubsection{Step 5: Build}
+
+\begin{lstlisting}[language=bash]
+make -j$(nproc) package/network/services/hostapd/{clean,compile} V=s
+make -j$(nproc) package/feeds/nosnitch/nosnitch/{clean,compile} V=s
+make -j$(nproc)
+\end{lstlisting}
+
+\noindent The resulting firmware image is placed under
+\texttt{bin/targets/<target>/<profile>/}.
+
+\subsubsection{Step 6: Flash the device}
+
+For a device with OpenWrt already running, use \texttt{sysupgrade}:
+
+\begin{lstlisting}[language=bash]
+scp bin/targets/mediatek/filogic/openwrt-*-sysupgrade.bin \
+    root@192.168.1.1:/tmp/
+ssh root@192.168.1.1 "sysupgrade -v /tmp/openwrt-*-sysupgrade.bin"
+\end{lstlisting}
+
+\noindent For a stock-firmware device, follow the vendor's recovery
+procedure with the corresponding \texttt{-factory} image.
+
+\subsubsection{Step 7: Configure wireless}
+
+After reboot, SSH into the router and add the following options to each
+\texttt{config wifi-iface} block in \texttt{/etc/config/wireless} that
+the mitigations should protect:
+
+\begin{lstlisting}
+option isolate              '1'
+option multicast_to_unicast '1'
+option proxy_arp            '1'
+option wpa_strict_rekey     '1'
+option wpa_group_rekey      '600'
+option disable_dgaf         '1'
+option per_client_gtk       '1'
+\end{lstlisting}
+
+\noindent Patch~3 Step~5 (\texttt{ieee80211w=2}, MFP Required) is
+defaulted by the \texttt{950-hostapd-sh-uci.patch} when no
+\texttt{ieee80211w} is set on the wifi-iface; no manual setting is
+required. To keep legacy clients (Win7, very old Android, some IoT)
+working, explicitly set \texttt{option ieee80211w '0'} or \texttt{'1'}
+on the affected interface.
+
+For IPv6-serving networks, add \texttt{option ndp 'proxy'} to the
+corresponding \texttt{config interface} block in
+\texttt{/etc/config/network}.
+
+\subsubsection{Step 8: Configure the guard daemon}
+
+The daemon reads \texttt{/etc/config/nosnitch}. The shipped defaults are
+correct for a single-AP deployment on \texttt{br-lan}. Verify or adjust:
+
+\begin{lstlisting}
+config nosnitch 'main'
+    option enabled           '1'
+    option l3_isolation      '1'
+    option mac_lock          '1'
+    option mac_lock_bridge   '1'
+    option mac_lock_network  '0'
+    option bridge            'br-lan'
+    option sync_interface    'eth0'
+\end{lstlisting}
+
+\noindent Set \texttt{mac\_lock\_network} to \texttt{'1'} only in
+multi-AP deployments where \emph{every} AP on the wired LAN runs
+\texttt{nosnitch}. Mixed deployments will generate false-positive
+spoofing events when a legitimate client roams to an unpatched AP.
+
+\subsubsection{Step 9: Apply configuration}
+
+\begin{lstlisting}[language=bash]
+wifi reload
+/etc/init.d/network restart
+fw4 reload
+sysctl -p /etc/sysctl.d/30-nosnitch.conf
+/etc/init.d/nosnitch enable
+/etc/init.d/nosnitch restart
+\end{lstlisting}
+
+\subsubsection{Step 10: Verify}
+
+\begin{lstlisting}[language=bash]
+logread -e nosnitch
+nft list set inet fw4 wifi_clients
+ebtables -L FORWARD
+hostapd_cli -i wlan0 status | grep -E \
+    'per_client_gtk|proxy_arp|multicast_to_unicast'
+\end{lstlisting}
+
+\noindent A successful deployment shows a \texttt{started} line in the
+log output, an (initially empty) nftables set, no lingering ebtables
+rules, and the hostapd options reported as enabled. End-to-end
+validation uses the AirSnitch test tool; each attack primitive must
+fail when run from a client on the protected SSID.
+
+\subsection{Runtime-Only Deployment}
+\label{sec:deploy-runtime}
+
+On a router already running stock OpenWrt, the \texttt{nosnitch}
+package can be installed without rebuilding firmware. Patch~1's
+hostapd-resident primitives will not be active; the remaining
+mitigations are.
+
+\subsubsection{Step 1: Build the package}
+
+Using the OpenWrt SDK for the target platform:
+
+\begin{lstlisting}[language=bash]
+cd openwrt-sdk-*
+./scripts/feeds update nosnitch
+./scripts/feeds install nosnitch
+make package/nosnitch/compile V=s
+\end{lstlisting}
+
+\noindent The \texttt{.ipk} is produced under \texttt{bin/packages/}.
+The hostapd-patches helper script is not invoked in this path; the
+stock hostapd binary is used as-is.
+
+\subsubsection{Step 2: Install}
+
+\begin{lstlisting}[language=bash]
+scp bin/packages/*/nosnitch/nosnitch_*.ipk root@router:/tmp/
+ssh root@router "opkg update && opkg install /tmp/nosnitch_*.ipk"
+\end{lstlisting}
+
+\subsubsection{Step 3: Configure and reload}
+
+Apply the wireless and nosnitch configuration from
+\S\ref{sec:deploy-full} Steps~7--9, omitting the
+\texttt{per\_client\_gtk} option (the unpatched hostapd does not
+recognize it). The MFP default from the \texttt{950} patch is also not
+in effect; if MFP is desired, set \texttt{option ieee80211w '2'}
+explicitly on each protected wifi-iface.
+
+\subsection{Operational Notes}
+
+\begin{itemize}
+  \item \textbf{Patch drift.} The hostapd patches carry approximate
+  context. After every OpenWrt point release, rebase the patch files
+  against the new hostapd source and rerun the helper script
+  (\S\ref{sec:deploy-hostapd-patches}). Because the script uses
+  \texttt{patch~--forward}, it tolerates a partially-applied tree from
+  a previous build.
+  \item \textbf{Per-radio interface enumeration.} The daemon's
+  cross-radio MAC locking requires the wireless interface list to be
+  populated. On devices with non-default interface names, set
+  \texttt{option wlan\_ifaces 'wlan0 wlan1'} in
+  \texttt{/etc/config/nosnitch}.
+  \item \textbf{Gateway MAC locking.} Patch~3 Step~3 (preventing
+  gateway MAC spoofing) requires the upstream gateway's MAC address.
+  Set \texttt{option gateway\_mac} in \texttt{/etc/config/nosnitch} for
+  deployments behind a known upstream router.
+  \item \textbf{Uninstall.} \texttt{opkg remove nosnitch} removes the
+  daemon, the nftables ruleset fragment, and the sysctl overlay. The
+  hostapd patches remain baked into the firmware image; reverting
+  them requires a rebuild.
+\end{itemize}

@@ -30,4 +30,13 @@ through /etc/config/wireless.
 +	[ -n "$wpa_group_rekey" ]       && append bss_conf "wpa_group_rekey=$wpa_group_rekey" "$N"
 +	[ "$disable_dgaf" = "1" ]       && append bss_conf "disable_dgaf=1" "$N"
 +	[ "$per_client_gtk" = "1" ]     && append bss_conf "per_client_gtk=1" "$N"
++
++	# AirSnitch Patch 3 Step 5: default MFP to Required (2) when the user
++	# hasn't set ieee80211w. Stock hostapd.sh emits its own ieee80211w
++	# line for SAE/OWE; only fill the gap when nothing was emitted, so an
++	# explicit `option ieee80211w '0'` to support legacy clients still wins.
++	case "$bss_conf" in
++		*ieee80211w=*) ;;
++		*) append bss_conf "ieee80211w=2" "$N" ;;
++	esac
  }
